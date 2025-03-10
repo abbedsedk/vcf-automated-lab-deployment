@@ -1,6 +1,9 @@
 # Author: William Lam
 # Website: https://williamlam.com
 
+# Contributor: Abbed Sedkaoui
+# Website: https://strivevirtually.net
+
 param (
     [string]$EnvConfigFile
 )
@@ -18,24 +21,23 @@ if ($EnvConfigFile -and (Test-Path $EnvConfigFile)) {
 $verboseLogFile = "vcf-lab-deployment.log"
 $random_string = -join ((65..90) + (97..122) | Get-Random -Count 8 | % {[char]$_})
 $VAppName = "Nested-VCF-Lab-$random_string"
-$SeparateNSXSwitch = $false
+$SeparateNSXSwitch = $true
 $VCFVersion = ""
 
 $preCheck = 1
 $confirmDeployment = 1
 $deployNestedESXiVMsForMgmt = 1
-$deployNestedESXiVMsForWLD = 1
+$setVLanId = 1
+$deployNestedESXiVMsForWLD = 0
 $deployCloudBuilder = 1
 $moveVMsIntovApp = 1
 $generateMgmJson = 1
-$startVCFBringup = 1
-$generateWldHostCommissionJson = 1
+$startVCFBringup = 0
+$generateWldHostCommissionJson = 0
 $uploadVCFNotifyScript = 0
 
 $srcNotificationScript = "vcf-bringup-notification.sh"
 $dstNotificationScript = "/root/vcf-bringup-notification.sh"
-
-$StartTime = Get-Date
 
 Function My-Logger {
     param(
@@ -118,6 +120,8 @@ if($confirmDeployment -eq 1) {
     Write-Host -ForegroundColor Yellow "`n---- Cloud Builder Configuration ----"
     Write-Host -NoNewline -ForegroundColor Green "Hostname: "
     Write-Host -ForegroundColor White $CloudbuilderVMHostname
+	Write-Host -NoNewline -ForegroundColor Green "CB Network on Outer Esxi:"
+	Write-Host -ForegroundColor White $CBVMNetwork
     Write-Host -NoNewline -ForegroundColor Green "IP Address: "
     Write-Host -ForegroundColor White $CloudbuilderIP
 
@@ -163,6 +167,31 @@ if($confirmDeployment -eq 1) {
     Write-Host -ForegroundColor White $VMNTP
     Write-Host -NoNewline -ForegroundColor Green "Syslog: "
     Write-Host -ForegroundColor White $VMSyslog
+    
+    Write-Host -NoNewline -ForegroundColor Green "`nVM Network Configuration "
+    Write-Host -ForegroundColor White $NestedVmManagementNetworkCidr
+    
+    Write-Host -ForegroundColor Green "`nESXi Network Configuration "
+    Write-Host -NoNewline -ForegroundColor Green "Nested ESXi Management Network Cidr: "
+    Write-Host -ForegroundColor White $NestedESXiManagementNetworkCidr
+    Write-Host -NoNewline -ForegroundColor Green "Nested ESXi vMotion Network Cidr: "
+    Write-Host -ForegroundColor White $NestedESXivMotionNetworkCidr
+    Write-Host -NoNewline -ForegroundColor Green "Nested ESXi vSAN Network Cidr: "
+    Write-Host -ForegroundColor White $NestedESXivSANNetworkCidr
+    Write-Host -NoNewline -ForegroundColor Green "Nested ESXi NSX Tep Network Cidr: "
+    Write-Host -ForegroundColor White $NestedESXiNSXTepNetworkCidr
+    
+    Write-Host -ForegroundColor Green "`nVLAN configuration "
+    Write-Host -NoNewline -ForegroundColor Green "Nested VM Network VLanId: "
+    Write-Host -ForegroundColor White $NestedVMNetworkVLanId
+    Write-Host -NoNewline -ForegroundColor Green "Nested ESXi Management Network VLanId: "
+    Write-Host -ForegroundColor White $vmk0VLanId
+    Write-Host -NoNewline -ForegroundColor Green "Nested ESXi vMotion Network VLanId: "
+    Write-Host -ForegroundColor White $vmotionVLanId
+    Write-Host -NoNewline -ForegroundColor Green "Nested ESXi vSAN Network VLanId: "
+    Write-Host -ForegroundColor White $vsanVLanId
+    Write-Host -NoNewline -ForegroundColor Green "Nested ESXi NSX Tep Network VLanId: "
+    Write-Host -ForegroundColor White $HostTepVLanId
 
     Write-Host -ForegroundColor Magenta "`nWould you like to proceed with this deployment?`n"
     $answer = Read-Host -Prompt "Do you accept (Y or N)"
@@ -171,6 +200,8 @@ if($confirmDeployment -eq 1) {
     }
     Clear-Host
 }
+
+$StartTime = Get-Date
 
 if($deployNestedESXiVMsForMgmt -eq 1 -or $deployNestedESXiVMsForWLD -eq 1 -or $deployCloudBuilder -eq 1 -or $moveVMsIntovApp -eq 1) {
     My-Logger "Connecting to Management vCenter Server $VIServer ..."
@@ -189,10 +220,11 @@ if($deployNestedESXiVMsForMgmt -eq 1) {
         $ovfconfig = Get-OvfConfiguration $NestedESXiApplianceOVA
         $networkMapLabel = ($ovfconfig.ToHashTable().keys | where {$_ -Match "NetworkMapping"}).replace("NetworkMapping.","").replace("-","_").replace(" ","_")
         $ovfconfig.NetworkMapping.$networkMapLabel.value = $VMNetwork
+		$ovfconfig.common.guestinfo.vlan.value = $vmk0VLanId
         $ovfconfig.common.guestinfo.hostname.value = "${VMName}.${VMDomain}"
         $ovfconfig.common.guestinfo.ipaddress.value = $VMIPAddress
         $ovfconfig.common.guestinfo.netmask.value = $VMNetmask
-        $ovfconfig.common.guestinfo.gateway.value = $VMGateway
+        $ovfconfig.common.guestinfo.gateway.value = $vmk0Gateway
         $ovfconfig.common.guestinfo.dns.value = $VMDNS
         $ovfconfig.common.guestinfo.domain.value = $VMDomain
         $ovfconfig.common.guestinfo.ntp.value = $VMNTP
@@ -233,6 +265,26 @@ if($deployNestedESXiVMsForMgmt -eq 1) {
         My-Logger "Powering On $vmname ..."
         $vm | Start-Vm -RunAsync | Out-Null
     }
+}
+
+if($setVLanId -eq 1) {
+	$NestedESXiHostnameToIPsForManagementDomain.GetEnumerator() | Sort-Object -Property Value | Foreach-Object {
+            $VMName = $_.Key
+			$VMIPAddress = $_.Value
+            $targetVMHost = $VMIPAddress
+			
+			do {	
+			My-Logger "Waiting for $targetVMHost to be ready on network ..."
+			$ping = Test-Connection $targetVMHost -Quiet
+			sleep 60
+			} until ($ping -contains "True")
+			
+			$viConnectionESXi = Connect-VIServer $targetVMHost -User "root" -Password $VMPassword  -WarningAction SilentlyContinue | Out-File -Append -LiteralPath $verboseLogFile
+			$NestedVMNetwork = Get-VirtualPortgroup -Name "VM Network"
+			My-Logger "Setting VLAN ID $NestedVMNetworkVLanId for $NestedVMNetwork"
+			Set-VirtualPortgroup -VirtualPortGroup $NestedVMNetwork -VLanId $NestedVMNetworkVLanId | Out-File -Append -LiteralPath $verboseLogFile
+			Start-Sleep -Seconds 60;
+	}
 }
 
 if($deployNestedESXiVMsForWLD -eq 1) {
@@ -344,7 +396,7 @@ if($deployCloudBuilder -eq 1) {
     $ovfconfig = Get-OvfConfiguration $CloudBuilderOVA
 
     $networkMapLabel = ($ovfconfig.ToHashTable().keys | where {$_ -Match "NetworkMapping"}).replace("NetworkMapping.","").replace("-","_").replace(" ","_")
-    $ovfconfig.NetworkMapping.$networkMapLabel.value = $VMNetwork
+    $ovfconfig.NetworkMapping.$networkMapLabel.value = $CBVMNetwork
     $ovfconfig.common.guestinfo.hostname.value = $CloudbuilderFQDN
     $ovfconfig.common.guestinfo.ip0.value = $CloudbuilderIP
     $ovfconfig.common.guestinfo.netmask0.value = $VMNetmask
@@ -437,7 +489,7 @@ if($generateMgmJson -eq 1) {
             "ipAddressPrivate" = [ordered]@{
                 "ipAddress" = $VMIPAddress
                 "cidr" = $NestedESXiManagementNetworkCidr
-                "gateway" = $VMGateway
+                "gateway" = $vmk0Gateway
             }
             "hostname" = $VMName
             "credentials" = [ordered]@{
@@ -487,12 +539,22 @@ if($generateMgmJson -eq 1) {
         }
         "networkSpecs" = @(
             [ordered]@{
+                "networkType" = "VM_MANAGEMENT"
+                "subnet" = $NestedVmManagementNetworkCidr
+                "gateway" = $VMGateway
+                "vlanId" = $NestedVMNetworkVLanId
+                "mtu" = "1500"
+                "portGroupKey" = "vcf-m01-cl01-vds01-pg-VM-mgmt"
+                "standbyUplinks" = @()
+                "activeUplinks" = @("uplink1","uplink2")
+            }            
+            [ordered]@{
                 "networkType" = "MANAGEMENT"
                 "subnet" = $NestedESXiManagementNetworkCidr
-                "gateway" = $VMGateway
-                "vlanId" = "0"
+                "gateway" = $vmk0Gateway
+                "vlanId" = $vmk0VLanId
                 "mtu" = "1500"
-                "portGroupKey" = "vcf-m01-cl01-vds01-pg-mgmt"
+                "portGroupKey" = "vcf-m01-cl01-vds01-pg-ESXi-mgmt"
                 "standbyUplinks" = @()
                 "activeUplinks" = @("uplink1","uplink2")
             }
@@ -500,7 +562,7 @@ if($generateMgmJson -eq 1) {
                 "networkType" = "VMOTION"
                 "subnet" = $NestedESXivMotionNetworkCidr
                 "gateway" = $esxivMotionGateway
-                "vlanId" = "0"
+                "vlanId" = $vmotionVLanId
                 "mtu" = "9000"
                 "portGroupKey" = "vcf-m01-cl01-vds01-pg-vmotion"
                 "association" = "vcf-m01-dc01"
@@ -512,7 +574,7 @@ if($generateMgmJson -eq 1) {
                 "networkType" = "VSAN"
                 "subnet" = $NestedESXivSANNetworkCidr
                 "gateway"= $esxivSANGateway
-                "vlanId" = "0"
+                "vlanId" = $vsanVLanId
                 "mtu" = "9000"
                 "portGroupKey" = "vcf-m01-cl01-vds01-pg-vsan"
                 "includeIpAddressRanges" = @(@{"startIpAddress" = $esxivSANStart;"endIpAddress" = $esxivSANEnd})
@@ -539,7 +601,7 @@ if($generateMgmJson -eq 1) {
             "vip" = $NSXManagerVIPIP
             "vipFqdn" = $NSXManagerVIPHostname
             "nsxtLicense" = $NSXLicense
-            "transportVlanId" = "2005"
+            "transportVlanId" = $HostTepVLanId
             "ipAddressPoolSpec" = [ordered]@{
                 "name" = "vcf-m01-c101-tep01"
                 "description" = "ESXi Host Overlay TEP IP Pool"
@@ -588,6 +650,7 @@ if($generateMgmJson -eq 1) {
             "clusterName" = "vcf-m01-cl01"
             "vcenterName" = "vcenter-1"
             "clusterEvcMode" = ""
+			"hostFailuresToTolerate" = $hostFailuresToTolerate
             "vmFolders" = [ordered] @{
                 "MANAGEMENT" = "vcf-m01-fd-mgmt"
                 "NETWORKING" = "vcf-m01-fd-nsx"
