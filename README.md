@@ -24,6 +24,12 @@ You are now ready to get your VCF on! 😁
 ![](screenshots/screenshot-0.png)
 
 ## Changelog
+* **03/10/2025**
+  * Add support for dedicated Vlans per networks using `$VMNetwork` on VMTRUNK portgroup Vlan 4095, only mgmt domain supported at the moment
+   * Add dedicated `$CBVMNetwork` portgroup for CloudBuilder on same Vlan as VM Management
+   * Add `$setVLanId = 1`to configure NestedESXi "VM Network" to specified Vlan
+  * Add `$hostFailuresToTolerate` to allow less than 4 hosts
+  * Moved `$StartTime` start time after the deployment is confirmed with the Y to be more accruate
 * **02/28/2025**
   * Externalize user variables to configuration files
   * Fixed Workload Domain spec construction for vLCM-based deployment
