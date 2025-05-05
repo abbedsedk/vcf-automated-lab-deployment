@@ -1,6 +1,11 @@
 # Author: William Lam
 # Website: https://williamlam.com
 
+# Contributor: Abbed Sedkaoui
+# Website: https://strivevirtually.net
+
+# Usage: .\vcf-automated-workload-domain-deployment.ps1 -EnvConfigFile .\sample-vcf-wld-variables.ps1
+
 param (
     [string]$EnvConfigFile
 )
@@ -22,8 +27,6 @@ $startWLDDeployment = 1
 
 $verboseLogFile = "vcf-workload-domain-deployment.log"
 $VCFWorkloadDomainDeploymentJSONFile = "${VCFWorkloadDomainName}.json"
-
-$StartTime = Get-Date
 
 Function My-Logger {
     param(
@@ -80,6 +83,31 @@ if($confirmDeployment -eq 1) {
     Write-Host -NoNewline -ForegroundColor Green "Node 3: "
     Write-Host -ForegroundColor White "${NSXManagerNode3Hostname}.${VMDomain} ($NSXManagerNode3IP)"
 
+    Write-Host -NoNewline -ForegroundColor Green "`nVM Network Configuration from Management Domain: "
+    Write-Host -ForegroundColor White $NestedVmManagementNetworkCidr
+    
+    Write-Host -ForegroundColor Green "`nESXi Network Configuration for Workload Domain"
+    Write-Host -NoNewline -ForegroundColor Green "Workload Nested ESXi Management Network Cidr: "
+    Write-Host -ForegroundColor White $WldNestedESXiManagementNetworkCidr
+    Write-Host -NoNewline -ForegroundColor Green "Workload Nested ESXi vMotion Network Cidr: "
+    Write-Host -ForegroundColor White $WldNestedESXivMotionNetworkCidr
+    Write-Host -NoNewline -ForegroundColor Green "Workload Nested ESXi vSAN Network Cidr: "
+    Write-Host -ForegroundColor White $WldNestedESXivSANNetworkCidr
+    Write-Host -NoNewline -ForegroundColor Green "Workload Nested ESXi NSX Tep Network Cidr: "
+    Write-Host -ForegroundColor White $WldNestedESXiNSXTepNetworkCidr
+    
+    Write-Host -ForegroundColor Green "`nVLAN configuration for Workload Domain"
+    Write-Host -NoNewline -ForegroundColor Green "Workload Nested VM Network VLanId: "
+    Write-Host -ForegroundColor White $NestedVMNetworkVLanId
+    Write-Host -NoNewline -ForegroundColor Green "Workload Nested ESXi Management Network VLanId: "
+    Write-Host -ForegroundColor White $Wldvmk0VLanId
+    Write-Host -NoNewline -ForegroundColor Green "Workload Nested ESXi vMotion Network VLanId: "
+    Write-Host -ForegroundColor White $WldvmotionVLanId
+    Write-Host -NoNewline -ForegroundColor Green "Workload Nested ESXi vSAN Network VLanId: "
+    Write-Host -ForegroundColor White $WldvsanVLanId
+    Write-Host -NoNewline -ForegroundColor Green "Workload Nested ESXi NSX Tep Network VLanId: "
+    Write-Host -ForegroundColor White $WldHostTepVLanId
+
     Write-Host -ForegroundColor Magenta "`nWould you like to proceed with this deployment?`n"
     $answer = Read-Host -Prompt "Do you accept (Y or N)"
     if($answer -ne "Y" -or $answer -ne "y") {
@@ -88,18 +116,60 @@ if($confirmDeployment -eq 1) {
     Clear-Host
 }
 
+$StartTime = Get-Date
+
 My-Logger "Logging into SDDC Manager ..."
 Request-VCFToken -fqdn $sddcManagerFQDN -username $sddcManagerUsername -password $sddcManagerPassword | Out-Null
 
 if($commissionHost -eq 1) {
-    My-Logger "Retreiving VCF Management Domain $VCFManagementDomainPoolName PoolId ..."
-    $mgmtPoolId = (Get-VCFNetworkPool $VCFManagementDomainPoolName).id
+    My-Logger "Create NetworkPool for VMOTION and VSAN in $VCFWorkloadDomainPoolFile file"
+    $WldESXivMotionNetwork = $WldNestedESXivMotionNetworkCidr.split("/")[0]
+    $WldESXivMotionNetworkOctects = $WldESXivMotionNetwork.split(".")
+    $WldESXivMotionGateway = ($WldESXivMotionNetworkOctects[0..2] -join '.') + ".1"
+    $WldESXivMotionStart = ($WldESXivMotionNetworkOctects[0..2] -join '.') + ".101"
+    $WldESXivMotionEnd = ($WldESXivMotionNetworkOctects[0..2] -join '.') + ".118"
+
+    $WldESXivSANNetwork = $WldNestedESXivSANNetworkCidr.split("/")[0]
+    $WldESXivSANNetworkOctects = $WldESXivSANNetwork.split(".")
+    $WldESXivSANGateway = ($WldESXivSANNetworkOctects[0..2] -join '.') + ".1"
+    $WldESXivSANStart = ($WldESXivSANNetworkOctects[0..2] -join '.') + ".101"
+    $WldESXivSANEnd = ($WldESXivSANNetworkOctects[0..2] -join '.') + ".118"
+    
+    $wldPoolSpec = [ordered] @{
+        "name" = $VCFWorkloadDomainPoolName
+        "networks" = @(
+            [ordered] @{
+                "type" = "VMOTION"
+                "vlanId" = $WldVmotionVLanId
+                "mtu" = 9000
+                "subnet" = $WldESXivMotionNetwork
+                "mask" = "255.255.255.0"
+                "gateway" = $WldESXivMotionGateway
+                "ipPools" = @(@{"start" = $WldESXivMotionStart;"end" = $WldESXivMotionEnd})
+            }
+            [ordered] @{
+                "type" = "VSAN"
+                "vlanId" = $WldVsanVLanId
+                "mtu" = 9000
+                "subnet" = $WldESXivSANNetwork
+                "mask" = "255.255.255.0"
+                "gateway" = $WldESXivSANGateway
+                "ipPools" = @(@{"start" = $WldESXivSANStart;"end" = $WldESXivSANEnd})
+            }
+        )
+    }
+    
+    $wldPoolSpec | ConvertTo-Json -Depth 12 | Out-File -Force $VCFWorkloadDomainPoolFile
+    $VCFWorkloadDomainPool = New-VCFNetworkPool -json (Get-Content -Raw $VCFWorkloadDomainPoolFile)
+        
+    My-Logger "Retreiving VCF Vi Workload Domain $VCFWorkloadDomainPoolName PoolId ..."
+    $wldPoolId = (Get-VCFNetworkPool $VCFWorkloadDomainPoolName).id
 
     My-Logger "Updating $VCFWorkloadDomainAPIJSONFile with PoolId value ..."
     $hostCommissionFile = (Get-Content -Raw $VCFWorkloadDomainAPIJSONFile | ConvertFrom-Json)
 
     foreach ($line in $hostCommissionFile) {
-        $line.networkPoolId = $mgmtPoolId
+        $line.networkPoolId = $wldPoolId
 
         if($EnableVSANESA) {
             $line.storageType = "VSAN_ESA"
@@ -126,6 +196,11 @@ if($commissionHost -eq 1) {
 
 if($generateWLDDeploymentFile -eq 1) {
     My-Logger "Retreiving unassigned ESXi hosts from SDDC Manager and creating Workload Domain JSON deployment file $VCFWorkloadDomainDeploymentJSONFile"
+    $WldESXiNSXTepNetwork = $WldNestedESXiNSXTepNetworkCidr.split("/")[0]
+    $WldESXiNSXTepNetworkOctects = $WldESXiNSXTepNetwork.split(".")
+    $WldESXiNSXTepGateway = ($WldESXiNSXTepNetworkOctects[0..2] -join '.') + ".1"
+    $WldESXiNSXTepStart = ($WldESXiNSXTepNetworkOctects[0..2] -join '.') + ".11"
+    $WldESXiNSXTepEnd = ($WldESXiNSXTepNetworkOctects[0..2] -join '.') + ".128"
     $hostSpecs = @()
     foreach ($id in (Get-VCFhost -Status UNASSIGNED_USEABLE).id) {
         if($SeparateNSXSwitch) {
@@ -174,7 +249,7 @@ if($generateWLDDeploymentFile -eq 1) {
         "domainName" = $VCFWorkloadDomainName
         "orgName" = $VCFWorkloadDomainOrgName
         "vcenterSpec" = @{
-            "name" = "wld-vc-w01"
+            "name" = $VCSAHostname
             "networkDetailsSpec" = @{
                 "ipAddress" = $VCSAIP
                 "dnsName" = $VCSAHostname + "." + $VMDomain
@@ -183,6 +258,7 @@ if($generateWLDDeploymentFile -eq 1) {
             }
             "rootPassword" = $VCSARootPassword
             "datacenterName" = "wld-w01-dc01"
+            "vmSize" = $VCSAvmSize
         }
         "computeSpec" = [ordered] @{
             "clusterSpecs" = @(
@@ -191,7 +267,7 @@ if($generateWLDDeploymentFile -eq 1) {
                     "hostSpecs" = $hostSpecs
                     "datastoreSpec" = @{
                         "vsanDatastoreSpec" = @{
-                            "failuresToTolerate" = "1"
+                            "failuresToTolerate" = $hostFailuresToTolerate
                             "licenseKey" = $VSANLicense
                             "datastoreName" = "wld-w01-cl01-vsan01"
                         }
@@ -201,8 +277,8 @@ if($generateWLDDeploymentFile -eq 1) {
                             [ordered] @{
                                 "name" = "wld-w01-cl01-vds01"
                                 "portGroupSpecs" = @(
-                                    @{
-                                        "name" = "wld-w01-cl01-vds01-management"
+                                [ordered] @{
+                                        "name" = "wld-w01-cl01-vds01-ESXi-management"
                                         "transportType" = "MANAGEMENT"
                                     }
                                     @{
@@ -218,19 +294,14 @@ if($generateWLDDeploymentFile -eq 1) {
                         )
                         "nsxClusterSpec" = [ordered] @{
                             "nsxTClusterSpec" = @{
-                                "geneveVlanId" = 2005
+                                "geneveVlanId" = $WldHostTepVLanId
                                 "ipAddressPoolSpec" = @{
                                     "name" = "wld-pool"
                                     "subnets" = @(
                                         [ordered] @{
-                                            "cidr" = "10.0.5.0/24"
-                                            "gateway" = "10.0.5.253"
-                                            "ipAddressPoolRanges" = @(
-                                                [ordered] @{
-                                                    "start" = "10.0.5.1"
-                                                    "end" = "10.0.5.128"
-                                                }
-                                            )
+                                            "cidr" = $WldNestedESXiNSXTepNetworkCidr
+                                            "gateway" = $WldESXiNSXTepGateway
+                                            "ipAddressPoolRanges" = @(@{"start" = $WldESXiNSXTepStart;"end" = $WldESXiNSXTepEnd})
                                         }
                                     )
                                 }
@@ -241,6 +312,7 @@ if($generateWLDDeploymentFile -eq 1) {
             )
         }
         "nsxTSpec" = [ordered] @{
+            "nsxtManagerSize" = $NSXManagerSize
             "nsxManagerSpecs" = @(
                 [ordered] @{
                     "name" = $NSXManagerNode1Hostname
@@ -277,8 +349,26 @@ if($generateWLDDeploymentFile -eq 1) {
         }
     }
 
-    if($SeparateNSXSwitch) {
-        $payload.computeSpec.clusterSpecs.networkSpec.vdsSpecs+=@{"name"="wld-w01-cl01-vds02";"isUsedByNsxt"=$true}
+	if($SeparateNSXSwitch) {
+			$sepNsxSwitchSpec = [ordered]@{
+				"name" = "wld-w01-cl01-vds02"
+                "vmnics" = @("vmnic2","vmnic3")
+                "mtu" = 9000
+				"nsxtSwitchConfig" = [ordered]@{
+					"transportZones" = @(
+						[ordered]@{
+						"name" = "vcf-m01-tz-overlay01"
+						"transportType" = "OVERLAY"
+						}
+						[ordered]@{
+						"name" = "vcf-m01-tz-vlan01"
+						"transportType" = "VLAN"
+						}
+					)
+					"hostSwitchOperationalMode" = "ENS_INTERRUPT"
+				}
+			}
+            $payload.computeSpec.clusterSpecs.networkSpec.vdsSpecs+=$sepNsxSwitchSpec
     }
 
     if($LicenseLater) {
