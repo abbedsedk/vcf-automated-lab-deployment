@@ -4,6 +4,8 @@
 # Contributor: Abbed Sedkaoui
 # Website: https://strivevirtually.net
 
+# Usage: .\vcf-automated-lab-deployment.ps1 -EnvConfigFile .\sample-vcf-mgmt-variables.ps1
+
 param (
     [string]$EnvConfigFile
 )
@@ -20,20 +22,20 @@ if ($EnvConfigFile -and (Test-Path $EnvConfigFile)) {
 
 $verboseLogFile = "vcf-lab-deployment.log"
 $random_string = -join ((65..90) + (97..122) | Get-Random -Count 8 | % {[char]$_})
-$VAppName = "Nested-VCF-Lab-$random_string"
+$VAppName = "Nested-VCF-Lab-AajPLVSM" #"Nested-VCF-Lab-$random_string"
 $SeparateNSXSwitch = $true
 $VCFVersion = ""
 
 $preCheck = 1
 $confirmDeployment = 1
 $deployNestedESXiVMsForMgmt = 1
+$deployNestedESXiVMsForWLD = 1
 $setVLanId = 1
-$deployNestedESXiVMsForWLD = 0
 $deployCloudBuilder = 1
 $moveVMsIntovApp = 1
 $generateMgmJson = 1
 $startVCFBringup = 0
-$generateWldHostCommissionJson = 0
+$generateWldHostCommissionJson = 1
 $uploadVCFNotifyScript = 0
 
 $srcNotificationScript = "vcf-bringup-notification.sh"
@@ -267,26 +269,6 @@ if($deployNestedESXiVMsForMgmt -eq 1) {
     }
 }
 
-if($setVLanId -eq 1) {
-	$NestedESXiHostnameToIPsForManagementDomain.GetEnumerator() | Sort-Object -Property Value | Foreach-Object {
-            $VMName = $_.Key
-			$VMIPAddress = $_.Value
-            $targetVMHost = $VMIPAddress
-			
-			do {	
-			My-Logger "Waiting for $targetVMHost to be ready on network ..."
-			$ping = Test-Connection $targetVMHost -Quiet
-			sleep 60
-			} until ($ping -contains "True")
-			
-			$viConnectionESXi = Connect-VIServer $targetVMHost -User "root" -Password $VMPassword  -WarningAction SilentlyContinue | Out-File -Append -LiteralPath $verboseLogFile
-			$NestedVMNetwork = Get-VirtualPortgroup -Name "VM Network"
-			My-Logger "Setting VLAN ID $NestedVMNetworkVLanId for $NestedVMNetwork"
-			Set-VirtualPortgroup -VirtualPortGroup $NestedVMNetwork -VLanId $NestedVMNetworkVLanId | Out-File -Append -LiteralPath $verboseLogFile
-			Start-Sleep -Seconds 60;
-	}
-}
-
 if($deployNestedESXiVMsForWLD -eq 1) {
     $NestedESXiHostnameToIPsForWorkloadDomain.GetEnumerator() | Sort-Object -Property Value | Foreach-Object {
         $VMName = $_.Key
@@ -295,10 +277,11 @@ if($deployNestedESXiVMsForWLD -eq 1) {
         $ovfconfig = Get-OvfConfiguration $NestedESXiApplianceOVA
         $networkMapLabel = ($ovfconfig.ToHashTable().keys | where {$_ -Match "NetworkMapping"}).replace("NetworkMapping.","").replace("-","_").replace(" ","_")
         $ovfconfig.NetworkMapping.$networkMapLabel.value = $VMNetwork
+		$ovfconfig.common.guestinfo.vlan.value = $WldVmk0VLanId
         $ovfconfig.common.guestinfo.hostname.value = "${VMName}.${VMDomain}"
         $ovfconfig.common.guestinfo.ipaddress.value = $VMIPAddress
         $ovfconfig.common.guestinfo.netmask.value = $VMNetmask
-        $ovfconfig.common.guestinfo.gateway.value = $VMGateway
+        $ovfconfig.common.guestinfo.gateway.value = $WldVmk0Gateway
         $ovfconfig.common.guestinfo.dns.value = $VMDNS
         $ovfconfig.common.guestinfo.domain.value = $VMDomain
         $ovfconfig.common.guestinfo.ntp.value = $VMNTP
@@ -392,6 +375,45 @@ if($deployNestedESXiVMsForWLD -eq 1) {
     }
 }
 
+if($setVLanId -eq 1) {
+	if($deployNestedESXiVMsForMgmt -eq 1) {
+		$NestedESXiHostnameToIPsForManagementDomain.GetEnumerator() | Sort-Object -Property Value | Foreach-Object {
+				$VMName = $_.Key
+				$VMIPAddress = $_.Value
+				$targetVMHost = $VMIPAddress
+				
+				do {	
+				My-Logger "Waiting for $targetVMHost to be ready on network ..."
+				$ping = Test-Connection $targetVMHost -Quiet
+				sleep 60
+				} until ($ping -contains "True")
+				
+				$viConnectionESXi = Connect-VIServer $targetVMHost -User "root" -Password $VMPassword  -WarningAction SilentlyContinue | Out-File -Append -LiteralPath $verboseLogFile
+				My-Logger "Setting VLAN ID $NestedVMNetworkVLanId for VM Network"
+				Get-VirtualPortgroup -Server $viConnectionESXi -Name "VM Network" | Set-VirtualPortgroup -VLanId $NestedVMNetworkVLanId | Out-File -Append -LiteralPath $verboseLogFile
+				Start-Sleep -Seconds 60;
+		}
+    }
+	if($deployNestedESXiVMsForWLD -eq 1) {
+		$NestedESXiHostnameToIPsForWorkloadDomain.GetEnumerator() | Sort-Object -Property Value | Foreach-Object {
+				$VMName = $_.Key
+				$VMIPAddress = $_.Value
+				$targetVMHost = $VMIPAddress
+				
+				do {	
+				My-Logger "Waiting for $targetVMHost to be ready on network ..."
+				$ping = Test-Connection $targetVMHost -Quiet
+				sleep 60
+				} until ($ping -contains "True")
+				
+				$viConnectionESXi = Connect-VIServer $targetVMHost -User "root" -Password $VMPassword  -WarningAction SilentlyContinue | Out-File -Append -LiteralPath $verboseLogFile 
+				My-Logger "Setting VLAN ID $NestedVMNetworkVLanId for VM Network"
+				Get-VirtualPortgroup -Server $viConnectionESXi -Name "VM Network" | Set-VirtualPortgroup -VLanId $NestedVMNetworkVLanId | Out-File -Append -LiteralPath $verboseLogFile
+				Start-Sleep -Seconds 60;
+		}
+	}
+}
+
 if($deployCloudBuilder -eq 1) {
     $ovfconfig = Get-OvfConfiguration $CloudBuilderOVA
 
@@ -419,9 +441,11 @@ if($deployCloudBuilder -eq 1) {
 if($moveVMsIntovApp -eq 1) {
     # Check whether DRS is enabled as that is required to create vApp
     if((Get-Cluster -Server $viConnection $cluster).DrsEnabled) {
-        My-Logger "Creating vApp $VAppName ..."
+        My-Logger "Creating vApp $VAppName if not exist ..."
         $rp = Get-ResourcePool -Name Resources -Location $cluster
-        $VApp = New-VApp -Name $VAppName -Server $viConnection -Location $cluster
+        if(-Not ($VApp = Get-VApp -Name $VAppName -Server $viConnection -Location $cluster -ErrorAction Ignore)) {
+            $VApp = New-VApp -Name $VAppName -Server $viConnection -Location $cluster
+        }
 
         if(-Not (Get-Folder $VMFolder -ErrorAction Ignore)) {
             My-Logger "Creating VM Folder $VMFolder ..."
@@ -734,20 +758,30 @@ if($generateMgmJson -eq 1) {
             "rootVcenterPassword" = $VCSARootPassword
         }
         "hostSpecs" = $hostSpecs
-        "excludedComponents" = @("NSX-V", "AVN", "EBGP")
     }
-
+    
     if($SeparateNSXSwitch) {
-        $sepNsxSwitchSpec = [ordered]@{
-            "dvsName" = "vcf-m01-nsx-vds01"
-            "vcenterId" = "vcenter-1"
-            "vmnics" = @("vmnic2","vmnic3")
-            "mtu" = 9000
-            "networks" = @()
-            "isUsedByNsxt" = $true
-
-        }
-        $vcfConfig.dvsSpecs+=$sepNsxSwitchSpec
+			$sepNsxSwitchSpec = [ordered]@{
+				"dvsName" = "vcf-m01-nsx-vds01"
+                "vcenterId" = "vcenter-1"
+                "vmnics" = @("vmnic2","vmnic3")
+                "mtu" = "9000"
+				"isUsedByNsxt" = $true
+				"nsxtSwitchConfig" = [ordered]@{
+					"transportZones" = @(
+						[ordered]@{
+						"name" = "vcf-m01-tz-overlay01"
+						"transportType" = "OVERLAY"
+						}
+						[ordered]@{
+						"name" = "vcf-m01-tz-vlan01"
+						"transportType" = "VLAN"
+						}
+					)
+					"hostSwitchOperationalMode" = "ENS_INTERRUPT"
+				}
+			}
+            $vcfConfig.dvsSpecs+=$sepNsxSwitchSpec
     }
 
     # License Later feature only applicable for VCF 5.1.1 and later
@@ -776,7 +810,7 @@ if($generateWldHostCommissionJson -eq 1) {
             "hostfqdn" = $hostFQDN;
             "username" = "root";
             "password" = $VMPassword;
-            "networkPoolName" = "$VCFManagementDomainPoolName";
+            "networkPoolName" = "$VCFWorkloadDomainPoolName";
             "storageType" = "VSAN";
         }
         $commissionHostsUI += $tmp1
