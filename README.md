@@ -24,8 +24,19 @@ You are now ready to get your VCF on! 😁
 ![](screenshots/screenshot-0.png)
 
 ## Changelog
+* **04/29/2025**
+  * Add support for dedicated Vlans per networks, now both Management and Vi Workload Domain
+   * VM Network from Management Domain is used for Vi Workload Domain
+   * Automatically create dedicated Networkpool VSAN and VMOTION vlans and ip-pool for Vi Workload Domain, variables $VCFWorkloadDomainPoolName and $VCFWorkloadDomainPoolFile
+   * Added Network Cidr and Vlans variables for "VM Network","ESXi Management Network", "VMOTION", "VSAN", "TEP" for Vi Workload Domain
+   * Added $VCSAvmSize, $NSXManagerSize, $WldVmk0Gateway, $hostFailuresToTolerate
+   * Fix Vi Workload Domain vCenter VM name to use $VCSAHostname
+   * Added NSX hostSwitchOperationalMode "ENS_INTERRUPT" Enhanced DataPath Standard as default for Vi Workloard Domain
+   * Added NSX transportzone VLAN and Overlay
 * **03/10/2025**
-  * Add support for dedicated Vlans per networks using `$VMNetwork` on VMTRUNK portgroup Vlan 4095, only mgmt domain supported at the moment
+  * [Commit](https://github.com/abbedsedk/vcf-automated-lab-deployment/commit/d877fa97831d8d930d779abb7ffdf8b1ba1d4b1d)
+  * [Blog](https://strivevirtually.net/post/automated-vmware-cloud-foundation-lab-deployment-branch-fork-vlan/)
+  * Add support for dedicated Vlans per networks using `$VMNetwork` on VMTRUNK portgroup Vlan 4095, only Management Workload Domain supported at the moment
    * Add dedicated `$CBVMNetwork` portgroup for CloudBuilder on same Vlan as VM Management
    * Add `$setVLanId = 1`to configure NestedESXi "VM Network" to specified Vlan
   * Add `$hostFailuresToTolerate` to allow less than 4 hosts
