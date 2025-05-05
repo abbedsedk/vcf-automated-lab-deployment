@@ -25,6 +25,7 @@ You are now ready to get your VCF on! 😁
 
 ## Changelog
 * **04/29/2025**
+  * [Blog](https://strivevirtually.net/post/automated-vmware-cloud-foundation-lab-deployment-branch-fork-vlan-update-workload-domains-support/)
   * Add support for dedicated Vlans per networks, now both Management and Vi Workload Domain
    * VM Network from Management Domain is used for Vi Workload Domain
    * Automatically create dedicated Networkpool VSAN and VMOTION vlans and ip-pool for Vi Workload Domain, variables $VCFWorkloadDomainPoolName and $VCFWorkloadDomainPoolFile
