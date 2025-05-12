@@ -34,6 +34,7 @@ You are now ready to get your VCF on! 😁
    * Fix Vi Workload Domain vCenter VM name to use $VCSAHostname
    * Added NSX hostSwitchOperationalMode "ENS_INTERRUPT" Enhanced DataPath Standard as default for Vi Workloard Domain
    * Added NSX transportzone VLAN and Overlay
+   * Add check if not exist for $VAppName, to support reuse of the created vApp provided hardcoding $VAppName value ex:"Nested-VCF-Lab-AajPLVSM" in vcf-automated-lab-deployment.ps1
 * **03/10/2025**
   * [Commit](https://github.com/abbedsedk/vcf-automated-lab-deployment/commit/d877fa97831d8d930d779abb7ffdf8b1ba1d4b1d)
   * [Blog](https://strivevirtually.net/post/automated-vmware-cloud-foundation-lab-deployment-branch-fork-vlan/)
