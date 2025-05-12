@@ -22,7 +22,7 @@ if ($EnvConfigFile -and (Test-Path $EnvConfigFile)) {
 
 $verboseLogFile = "vcf-lab-deployment.log"
 $random_string = -join ((65..90) + (97..122) | Get-Random -Count 8 | % {[char]$_})
-$VAppName = "Nested-VCF-Lab-AajPLVSM" #"Nested-VCF-Lab-$random_string"
+$VAppName = "Nested-VCF-Lab-$random_string" # Reuse the generated VAppName value for example replace with "Nested-VCF-Lab-AajPLVSM"
 $SeparateNSXSwitch = $true
 $VCFVersion = ""
 
